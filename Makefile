@@ -16,6 +16,21 @@ GOBUILD=CGO_ENABLED=0 go build -tags with_gvisor -trimpath -ldflags '-X "github.
 		-X "github.com/metacubex/mihomo/constant.BuildTime=$(BUILDTIME)" \
 		-w -s -buildid='
 
+# cgo + libssl variant. Switches the OpenVPN control channel from
+# crypto/tls (which omits DHE-RSA cipher suites, see golang/go#7758)
+# to libssl via the transport/openvpn/libssl package. Requires a
+# libssl installation discoverable by pkg-config; macOS Homebrew's
+# `openssl@3` formula exposes the right pkg-config file at
+# /opt/homebrew/opt/openssl@3/lib/pkgconfig.
+#
+# The resulting binary dynamically links libssl/libcrypto, so it is
+# NOT a single-file distribution. The default build (GOBUILD above)
+# remains the CGO_ENABLED=0 single-binary release path; this target
+# is opt-in for operators who need DHE-RSA / TLS-DHE-* cipher suites.
+CGO_BUILD=PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) CGO_ENABLED=1 go build -tags 'with_gvisor with_libssl' -trimpath -ldflags '-X "github.com/metacubex/mihomo/constant.Version=$(VERSION)" \
+		-X "github.com/metacubex/mihomo/constant.BuildTime=$(BUILDTIME)" \
+		-w -s -buildid='
+
 PLATFORM_LIST = \
 	darwin-386 \
 	darwin-amd64-compatible \
@@ -87,6 +102,19 @@ darwin-amd64-v3:
 
 darwin-arm64:
 	GOARCH=arm64 GOOS=darwin $(GOBUILD) -o $(BINDIR)/$(NAME)-$@
+
+# cgo + libssl build. PKG_CONFIG_PATH must point at the directory
+# holding openssl.pc. On macOS Homebrew: `brew install openssl@3`
+# (auto-installed) gives `/opt/homebrew/opt/openssl@3/lib/pkgconfig`.
+# Override on the command line to point at a different prefix:
+#
+#   make darwin-arm64-libssl PKG_CONFIG_PATH=/path/to/openssl/lib/pkgconfig
+#
+# The resulting binary is dynamically linked against libssl/libcrypto
+# from the prefix above; the runtime loader must be able to find the
+# dylib (Homebrew's Homebrew dynamic loader config usually does).
+darwin-arm64-libssl:
+	GOARCH=arm64 GOOS=darwin PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) $(CGO_BUILD) -o $(BINDIR)/$(NAME)-$@
 
 linux-386:
 	GOARCH=386 GOOS=linux $(GOBUILD) -o $(BINDIR)/$(NAME)-$@

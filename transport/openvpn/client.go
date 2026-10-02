@@ -41,7 +41,10 @@ type Client struct {
 	controlConn *ControlConn
 	// tlsConn is the active TLS session; swapped on each rekey by the
 	// watchControl goroutine and read by Close. Atomic to avoid racing.
-	tlsConn atomic.Pointer[tls.Conn]
+	// The pointer-to-tlsEpoch trick lets us store any tlsiConn
+	// implementation (crypto/tls.Conn or libssl.Conn) without losing
+	// type information.
+	tlsConn atomic.Pointer[tlsEpoch]
 	// controlEstablishedAt anchors AUTH_PENDING like OpenVPN
 	// key_state.established. It is captured after the server KM2 record is
 	// parsed and its key material is derived, before deferred-auth messages.
@@ -236,10 +239,6 @@ func (c *Client) Handshake(ctx context.Context) (*PushReply, error) {
 }
 
 func (c *Client) startTLSEpoch(ctx context.Context) (interrupt func(), err error) {
-	tlsConfig, err := c.tlsConfig()
-	if err != nil {
-		return nil, err
-	}
 	if c.tlsConn.Load() != nil {
 		// Drop the old epoch without writing close_notify. Close() would send
 		// it on whatever key ID is current and pollute the new control epoch.
@@ -250,12 +249,19 @@ func (c *Client) startTLSEpoch(ctx context.Context) (interrupt func(), err error
 	// authentication for this TLS/KM2 epoch.
 	c.controlEstablishedAt = time.Time{}
 	c.leftoverTLS = nil
-	conn := tls.Client(c.controlConn, tlsConfig)
-	c.tlsConn.Store(conn)
+	conn, err := newTLSConn(c.controlConn, c.config)
+	if err != nil {
+		return nil, fmt.Errorf("build openvpn tls client: %w", err)
+	}
+	c.tlsConn.Store(&tlsEpoch{conn})
 	interrupt = interruptControlConnOnDone(ctx, c.controlConn)
 	if err := conn.HandshakeContext(ctx); err != nil {
 		interrupt()
 		return nil, fmt.Errorf("openvpn tls handshake: %w", err)
+	}
+	if err := verifyPeerFromConn(conn, c.config.CA); err != nil {
+		interrupt()
+		return nil, fmt.Errorf("openvpn tls peer verify: %w", err)
 	}
 	// Drain any control packets that arrived on the new epoch while the
 	// handshake was reading, so they are not acknowledged and dropped by a
@@ -1741,9 +1747,27 @@ func containsString(list []string, s string) bool {
 	return false
 }
 
-func (c *Client) tlsConfig() (*tls.Config, error) {
+// buildTLSConfig materialises the *tls.Config the OpenVPN transport
+// uses to drive a TLS client. It is the source-of-truth used by the
+// crypto/tls build path (tlsconn_nocgo.go); the libssl path
+// (tlsconn_cgo.go) reads the same fields but pipes them through a
+// different runtime.
+//
+// verifyChain runs against the same trust roots on both paths: the
+// crypto/tls path uses it as the VerifyConnection callback (inside
+// HandshakeContext), while the libssl path applies the same
+// x509.Verify policy post-handshake via verifyPeerFromConn.
+func buildTLSConfig(c *ClientConfig) (*tls.Config, error) {
+	return buildTLSConfigFromConfig(c)
+}
+
+func buildTLSConfigFromConfig(c *ClientConfig) (*tls.Config, error) {
+	return buildTLSConfigInner(c.CA, c.Cert, c.Key)
+}
+
+func buildTLSConfigInner(caPEM, certPEM, keyPEM []byte) (*tls.Config, error) {
 	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(c.config.CA) {
+	if !roots.AppendCertsFromPEM(caPEM) {
 		return nil, errors.New("parse openvpn ca certificate")
 	}
 	verify := func(cs tls.ConnectionState) error {
@@ -1768,10 +1792,8 @@ func (c *Client) tlsConfig() (*tls.Config, error) {
 		// servers rekey the control channel at regular intervals (default 1h).
 		Renegotiation: tls.RenegotiateFreelyAsClient,
 	}
-	certPEM := bytes.TrimSpace(c.config.Cert)
-	keyPEM := bytes.TrimSpace(c.config.Key)
-	if len(certPEM) > 0 && len(keyPEM) > 0 {
-		cert, err := tls.X509KeyPair(c.config.Cert, c.config.Key)
+	if len(bytes.TrimSpace(certPEM)) > 0 && len(bytes.TrimSpace(keyPEM)) > 0 {
+		cert, err := tls.X509KeyPair(certPEM, keyPEM)
 		if err != nil {
 			return nil, fmt.Errorf("parse client certificate/key: %w", err)
 		}
@@ -1779,5 +1801,7 @@ func (c *Client) tlsConfig() (*tls.Config, error) {
 	}
 	return cfg, nil
 }
+
+// (legacy method removed; callers should use buildTLSConfig.)
 
 var _ net.Conn = (*ControlConn)(nil)
