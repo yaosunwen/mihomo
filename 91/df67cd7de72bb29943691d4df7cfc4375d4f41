@@ -1,0 +1,40 @@
+Makefile
+  h_eadf7398f75961 19-33,106-118
+docs/openvpn-handshake-investigation.md
+  h_eadf7398f75961 1-330
+docs/openvpn-libssl.md
+  h_eadf7398f75961 1-197
+transport/openvpn/client.go
+  h_eadf7398f75961 44-47,252-256,262-265,1750-1768,1770,1795-1796,1805-1806
+transport/openvpn/libssl/cmd/smoketest/main.go
+  h_eadf7398f75961 1-107
+transport/openvpn/libssl/config.go
+  h_eadf7398f75961 1-220
+transport/openvpn/libssl/conn.go
+  h_eadf7398f75961 1-400
+transport/openvpn/libssl/libssl_helpers.c
+  h_eadf7398f75961 1-49
+transport/openvpn/libssl/ssl.go
+  h_eadf7398f75961 1-169
+transport/openvpn/libssl/stub.go
+  h_eadf7398f75961 1-76
+transport/openvpn/libssl/x509.go
+  h_eadf7398f75961 1-136
+transport/openvpn/tlsconn.go
+  h_eadf7398f75961 1-57
+transport/openvpn/tlsconn_cgo.go
+  h_eadf7398f75961 1-77
+transport/openvpn/tlsconn_nocgo.go
+  h_eadf7398f75961 1-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "91df67cd7de72bb29943691d4df7cfc4375d4f41",
+  "prompts": {},
+  "humans": {
+    "h_eadf7398f75961": {
+      "author": "yaosunwen <yaosunwen@qq.com>"
+    }
+  }
+}
